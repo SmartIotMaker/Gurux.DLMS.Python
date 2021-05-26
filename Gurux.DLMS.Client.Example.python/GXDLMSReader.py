@@ -51,7 +51,7 @@ class GXDLMSReader:
     def __init__(self, client, media, trace, invocationCounter, useOpticalHead):
         #pylint: disable=too-many-arguments
         self.replyBuff = bytearray(8 + 1024)
-        self.waitTime = 5000
+        self.waitTime = 120000
         self.logFile = open("logFile.txt", "w")
         self.trace = trace
         self.media = media
@@ -101,7 +101,7 @@ class GXDLMSReader:
                 #  All meters don't support release.
             reply.clear()
             self.readDLMSPacket(self.client.disconnectRequest(), reply)
-            self.media.close()
+            # self.media.close()
 
     @classmethod
     def now(cls):
@@ -518,10 +518,7 @@ class GXDLMSReader:
         if not self.client.useLogicalNameReferencing:
             sn = self.client.objects.findBySN(0xFA00)
             if sn and sn.version > 0:
-                try:
-                    self.read(sn, 3)
-                except (GXDLMSException):
-                    self.writeTrace("Access rights are not implemented for the meter.", TraceLevel.INFO)
+                self.read(sn, 3)
 
     def readAll(self, outputFile):
         try:
