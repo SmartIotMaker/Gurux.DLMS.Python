@@ -12,7 +12,7 @@
     <Name>Gurux.DLMS.Client.Example.python</Name>
     <RootNamespace>Gurux.DLMS.Client.Example.python</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <CommandLineArguments>-h localhost -p 1000</CommandLineArguments>
+    <CommandLineArguments>-r ln -c 1 -s 4 -w -h 192.125.17.173 -p 8081 -g "1.0.99.1.0.255:2" -a Low -P "0x3132333435363738" -o "device.xml"</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
