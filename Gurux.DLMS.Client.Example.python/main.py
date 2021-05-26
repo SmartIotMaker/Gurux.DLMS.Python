@@ -34,6 +34,11 @@
 import os
 import sys
 import traceback
+import schedule
+import threading
+import time
+import timedelta
+import datetime
 from gurux_serial import GXSerial
 from gurux_net import GXNet
 from gurux_dlms.enums import ObjectType
@@ -47,6 +52,7 @@ import locale
 from gurux_dlms.GXDateTime import GXDateTime
 from gurux_dlms.internal._GXCommon import _GXCommon
 from gurux_dlms import GXDLMSException, GXDLMSExceptionResponse, GXDLMSConfirmedServiceError
+from gurux_dlms.objects import GXDLMSProfileGeneric
 
 try:
     import pkg_resources
@@ -56,6 +62,70 @@ except Exception:
     print("pkg_resources not found")
 
 #pylint: disable=too-few-public-methods,broad-except
+class ReadThread(threading.Thread):
+    def __init__(self, threadname, devicexml, sap, setting, media):
+        threading.Thread.__init__(self)
+        self.threadname = threadname
+        self.devicexml = devicexml
+        self.sap = sap
+        self.settings = setting
+        self.media = media
+
+    def run(self):
+        reader = None
+        try:
+            # //////////////////////////////////////
+            self.settings.setserverAddress(self.sap)
+
+            reader = GXDLMSReader(self.settings.client, self.media, self.settings.trace, self.settings.invocationCounter, self.settings.iec)
+
+            if self.settings.readObjects:
+                read = False
+                reader.initializeConnection()
+                if self.settings.outputFile and os.path.exists(self.devicexml):
+                    try:
+                        c = GXDLMSObjectCollection.load(self.devicexml)
+                        self.settings.client.objects.extend(c)
+                        if self.settings.client.objects:
+                            read = True
+                    except Exception:
+                        read = False
+                if not read:
+                    reader.getAssociationView()
+                    reader.readScalerAndUnits()
+                    reader.getProfileGenericColumns()
+                    if self.settings.outputFile:
+                        self.settings.client.objects.save(self.devicexml)
+                for k, v in self.settings.readObjects:
+                    obj = self.settings.client.objects.findByLN(ObjectType.NONE, k)
+                    if obj is None:
+                         raise Exception(self.threadname + ":Unknown logical name:" + k)
+                    if isinstance(obj, GXDLMSProfileGeneric) and v == 2:
+                        profileGenerics = self.settings.client.objects.getObjects(ObjectType.PROFILE_GENERIC)
+                        for pg in profileGenerics:
+                            if str(pg.name) == k:
+                                end = datetime.datetime.now()
+                                start = end - datetime.timedelta(seconds=7200)
+                                val = reader.readRowsByRange(pg, start, end)
+                    else:
+                        val = reader.read(obj, v)
+                    reader.showValue(v, val)
+            else:
+                reader.readAll(settings.outputFile)
+        except (ValueError, GXDLMSException, GXDLMSExceptionResponse, GXDLMSConfirmedServiceError) as ex:
+            print(ex)
+        except (KeyboardInterrupt, SystemExit, Exception) as ex:
+            traceback.print_exc()
+            # settings.media.close()
+            reader = None
+        finally:
+            if reader:
+                try:
+                    reader.close()
+                except Exception:
+                    # traceback.print_exc()
+                    print(self.threadname + ":Ended. Press any key to continue.")
+
 class sampleclient():
     @classmethod
     def main(cls, args):
@@ -66,59 +136,40 @@ class sampleclient():
         except Exception:
             #It's OK if this fails.
             print("pkg_resources not found")
-
         # args: the command line arguments
-        reader = None
-        settings = GXSettings()
-        try:
-            # //////////////////////////////////////
-            #  Handle command line parameters.
-            ret = settings.getParameters(args)
-            if ret != 0:
-                return
-            # //////////////////////////////////////
-            #  Initialize connection settings.
-            if not isinstance(settings.media, (GXSerial, GXNet)):
-                raise Exception("Unknown media type.")
-            # //////////////////////////////////////
-            reader = GXDLMSReader(settings.client, settings.media, settings.trace, settings.invocationCounter, settings.iec)
-            settings.media.open()
-            if settings.readObjects:
-                read = False
-                reader.initializeConnection()
-                if settings.outputFile and os.path.exists(settings.outputFile):
-                    try:
-                        c = GXDLMSObjectCollection.load(settings.outputFile)
-                        settings.client.objects.extend(c)
-                        if settings.client.objects:
-                            read = True
-                    except Exception:
-                        read = False
-                if not read:
-                    reader.getAssociationView()
-                for k, v in settings.readObjects:
-                    obj = settings.client.objects.findByLN(ObjectType.NONE, k)
-                    if obj is None:
-                         raise Exception("Unknown logical name:" + k)
-                    val = reader.read(obj, v)
-                    reader.showValue(v, val)
-                if settings.outputFile:
-                    settings.client.objects.save(settings.outputFile)
-            else:
-                reader.readAll(settings.outputFile)
-        except (ValueError, GXDLMSException, GXDLMSExceptionResponse, GXDLMSConfirmedServiceError) as ex:
-            print(ex)
-        except (KeyboardInterrupt, SystemExit, Exception) as ex:
-            traceback.print_exc()
-            settings.media.close()
-            reader = None
-        finally:
-            if reader:
-                try:
-                    reader.close()
-                except Exception:
-                    traceback.print_exc()
-            print("Ended. Press any key to continue.")
+        settings1 = GXSettings()
+        settings2 = GXSettings()
+
+        # //////////////////////////////////////
+        #  Handle command line parameters.
+        ret = settings1.getParameters(args)
+        if ret != 0:
+            return
+
+        ret = settings2.getParameters(args)
+        if ret != 0:
+            return
+        # //////////////////////////////////////
+        #  Initialize connection settings.
+        if not isinstance(settings1.media, (GXSerial, GXNet)) and not isinstance(settings2.media, (GXSerial, GXNet)):
+            raise Exception("Unknown media type.")
+        while True:
+            settings1.media.open()
+            media1 = settings1.media
+
+            thread1 = ReadThread("read-1704", "735999254300061704.xml", 4, settings1,media1)
+            thread1.start()
+            # time.sleep(1)
+            thread2 = ReadThread("read-1703", "735999254300061703.xml", 5, settings2,media1)
+            thread2.start()
+
+            while True:
+                if not thread1.isAlive() and not thread2.isAlive():
+                # if not thread1.isAlive():
+                    break;
+
+            media1.close()
+            time.sleep(10)
 
 if __name__ == '__main__':
     sampleclient.main(sys.argv)
